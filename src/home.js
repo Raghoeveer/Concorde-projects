@@ -3,8 +3,8 @@
 //  Company facts from concorde.in (Nov 2026); copy written fresh.
 // ─────────────────────────────────────────────────────────────
 module.exports = {
-  seoTitle: 'Concorde Projects in Bangalore | Concorde Group Apartments, Villas & Plots',
-  metaDesc: 'Discover Concorde Group, a Bengaluru developer since 1998: 27 million sq ft delivered, 35 projects and 18,000+ families. Explore Concorde apartments, villas, plots and commercial spaces.',
+  seoTitle: 'Concorde Projects Bangalore | Apartments, Villas & Plots',
+  metaDesc: 'Concorde Group projects in Bangalore: apartments, villas, plots & commercial spaces by a developer building since 1998. Prices, RERA details & site visits.',
   h1: 'Concorde Projects — Homes Built in Bengaluru Since 1998',
   lead: 'From high-rise apartments and gated villas to plotted townships and commercial addresses, Concorde has spent close to three decades shaping how Bengaluru lives and works. Find every Concorde launch, with expert guidance from first enquiry to handover.',
 

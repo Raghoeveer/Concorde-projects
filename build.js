@@ -8,7 +8,31 @@ const projects = require('./src/projects');
 
 const OUT = path.join(__dirname, 'dist');
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// Real pixel sizes of every .webp under src/assets/img (keyed by filename) → correct width/height attrs (no layout shift)
+function webpSize(file) {
+  const b = fs.readFileSync(file);
+  const fmt = b.toString('ascii', 12, 16);
+  if (fmt === 'VP8X') return [1 + b.readUIntLE(24, 3), 1 + b.readUIntLE(27, 3)];
+  if (fmt === 'VP8L') { const n = b.readUInt32LE(21); return [1 + (n & 0x3fff), 1 + ((n >> 14) & 0x3fff)]; }
+  if (fmt === 'VP8 ') return [b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff];
+  return null;
+}
+const imgSizes = {};
+(function scan(dir) {
+  for (const f of fs.readdirSync(dir)) {
+    const full = path.join(dir, f);
+    if (fs.statSync(full).isDirectory()) scan(full);
+    else if (f.endsWith('.webp')) imgSizes[f] = webpSize(full);
+  }
+})(path.join(__dirname, 'src/assets/img'));
+const fixImgSizes = (html) => html.replace(/<img\b[^>]*>/g, (tag) => {
+  const src = (tag.match(/src="([^"]+)"/) || [])[1] || '';
+  const size = imgSizes[path.basename(src)];
+  if (!size) return tag;
+  return tag.replace(/\s(width|height)="\d+"/g, '').replace(/^<img/, `<img width="${size[0]}" height="${size[1]}"`);
+});
 const write = (rel, content) => {
+  if (rel.endsWith('.html')) content = fixImgSizes(content);
   const file = path.join(OUT, rel);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
@@ -72,7 +96,10 @@ const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 const asset = (depth, p) => `${'../'.repeat(depth)}assets/${p}`;
 const link = (depth, slug) => `${'../'.repeat(depth)}${slug ? slug + '/' : ''}` || './';
 
-function head({ title, desc, canonical, depth, image, jsonld = [] }) {
+function head({ title, desc, canonical, depth, image, imageAlt = '', preload = '', jsonld = [] }) {
+  if (title.length > 60) console.warn(`⚠ Title is ${title.length} chars (keep ≤ 60): ${title}`);
+  if (desc.length > 160) console.warn(`⚠ Meta description is ${desc.length} chars (keep ≤ 160): ${title}`);
+  const ogSize = imgSizes[path.basename(image)];
   return `<!doctype html>
 <html lang="en-IN">
 <head>
@@ -87,10 +114,17 @@ function head({ title, desc, canonical, depth, image, jsonld = [] }) {
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
 <meta property="og:url" content="${canonical}">
+<meta property="og:locale" content="en_IN">
 <meta property="og:image" content="${site.domain}/assets/${image}">
+${ogSize ? `<meta property="og:image:width" content="${ogSize[0]}">\n<meta property="og:image:height" content="${ogSize[1]}">` : ''}
+${imageAlt ? `<meta property="og:image:alt" content="${esc(imageAlt)}">` : ''}
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${esc(title)}">
+<meta name="twitter:description" content="${esc(desc)}">
+<meta name="twitter:image" content="${site.domain}/assets/${image}">
 <meta name="theme-color" content="#14213d">
 <link rel="icon" href="${asset(depth, 'img/favicon.svg')}" type="image/svg+xml">
+${preload ? `<link rel="preload" as="image" href="${preload}" fetchpriority="high">` : ''}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="${asset(depth, 'css/style.css')}">
@@ -359,7 +393,15 @@ function projectPage(p) {
   const url = `${site.domain}/${p.slug}/`;
   const others = projects.filter((o) => o.slug !== p.slug);
   const jsonld = [
-    { '@context': 'https://schema.org', '@type': 'ApartmentComplex', name: p.name, description: p.metaDesc, url,
+    { '@context': 'https://schema.org', '@type': 'WebPage', '@id': url, url, name: p.seoTitle, description: p.metaDesc, inLanguage: 'en-IN',
+      ...(p.updated ? { dateModified: p.updated } : {}),
+      primaryImageOfPage: `${site.domain}/assets/img/${imgDir(p)}/${p.images.hero[0]}`,
+      isPartOf: { '@type': 'WebSite', name: site.siteName, url: `${site.domain}/` },
+      about: { '@id': `${url}#property` },
+      publisher: { '@type': 'RealEstateAgent', name: site.siteName, url: `${site.domain}/`, telephone: site.phone } },
+    { '@context': 'https://schema.org', '@type': 'ApartmentComplex', '@id': `${url}#property`, name: p.name, description: p.metaDesc, url,
+      containedInPlace: { '@type': 'City', name: 'Bengaluru' },
+      ...(p.amenities.some(([k]) => k === 'pet') ? { petsAllowed: true } : {}),
       image: [p.images.hero[0], p.images.overview[0], ...p.images.gallery.map((g) => g[0])].map((f) => `${site.domain}/assets/img/${imgDir(p)}/${f}`),
       address: { '@type': 'PostalAddress', streetAddress: p.locality, addressLocality: 'Bengaluru', postalCode: p.pin, addressRegion: 'KA', addressCountry: 'IN' },
       numberOfAccommodationUnits: parseInt(projStat(p, 'Total Homes').replace(/\D/g, ''), 10),
@@ -375,10 +417,12 @@ function projectPage(p) {
   </div></nav>`;
   const body = `${header(1, subnav, true)}
 <main>
-  <section class="p-hero" style="background-image:url('${img(p, p.images.hero[0], 1)}')">
+  <section class="p-hero">
+    <img class="p-hero-bg" src="${img(p, p.images.hero[0], 1)}" alt="${esc(p.images.hero[1])}" fetchpriority="high" decoding="async" width="1600" height="900">
     <div class="wrap p-hero-grid">
       <div class="p-hero-copy">
         <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Concorde Projects</a> › <span>${esc(p.name)}</span></nav>
+        ${p.updated ? `<p class="updated">Updated <time datetime="${p.updated}">${new Date(p.updated).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</time></p>` : ''}
         <span class="tag tag-inline">${esc(p.badge)} · ${esc(p.status)}</span>
         <h1>${esc(p.h1)}</h1>
         <p class="p-hero-loc">${icon('walk')}${esc(p.locality)}, ${esc(p.city)} – ${esc(p.pin)}</p>
@@ -501,7 +545,7 @@ function projectPage(p) {
   </section>
 </main>
 ${footer(1, p)}`;
-  write(`${p.slug}/index.html`, head({ title: p.seoTitle, desc: p.metaDesc, canonical: url, depth: 1, image: `img/${imgDir(p)}/${p.images.hero[0]}`, jsonld }) + body);
+  write(`${p.slug}/index.html`, head({ title: p.seoTitle, desc: p.metaDesc, canonical: url, depth: 1, image: `img/${imgDir(p)}/${p.images.hero[0]}`, imageAlt: p.images.hero[1], preload: img(p, p.images.hero[0], 1), jsonld }) + body);
 }
 
 function privacyPage() {
@@ -533,9 +577,11 @@ privacyPage();
 
 const today = new Date().toISOString().slice(0, 10);
 write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url><loc>${site.domain}/</loc><lastmod>${today}</lastmod><priority>1.0</priority></url>
-${projects.map((p) => `  <url><loc>${site.domain}/${p.slug}/</loc><lastmod>${today}</lastmod><priority>0.9</priority></url>`).join('\n')}
+${projects.map((p) => `  <url><loc>${site.domain}/${p.slug}/</loc><lastmod>${p.updated || today}</lastmod><priority>0.9</priority>
+${[p.images.hero[0], p.images.overview[0], ...p.images.gallery.map((g) => g[0]), ...p.images.plans, p.images.master].map((f) => `    <image:image><image:loc>${site.domain}/assets/img/${imgDir(p)}/${f}</image:loc></image:image>`).join('\n')}
+  </url>`).join('\n')}
 </urlset>`);
 write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: ${site.domain}/sitemap.xml\n`);
 console.log(`Built ${projects.length + 2} pages → ${OUT}`);
